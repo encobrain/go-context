@@ -2,30 +2,14 @@ package context
 
 import (
 	"testing"
+	"time"
 )
 
-func TestGetFail (T *testing.T) {
-   	defer func () {
-   		err := recover()
-
-   		if err == nil {
-   			T.Fatal("No panic")
-		}
-	}()
-
-	Get("test")
+func TestGetNoRun (T *testing.T) {
+   	Get("test")
 }
 
-
-func TestSetFail (T *testing.T) {
-	defer func () {
-		err := recover()
-
-		if err == nil {
-			T.Fatal("No panic")
-		}
-	}()
-
+func TestSetNoRun (T *testing.T) {
 	Set("test", "test")
 }
 
@@ -56,18 +40,9 @@ func TestRun (T *testing.T) {
 	<-done
 }
 
-func TestPanicHandlerSetFail (T *testing.T) {
-	defer func () {
-		err := recover()
-
-		if err == nil {
-			T.Fatal("No panic")
-		}
-	}()
-
+func TestPanicHandlerSetNoRun (T *testing.T) {
 	SetPanicHandler(func(err interface{}) {})
 }
-
 
 func TestPanicHandlerSet (T *testing.T) {
 	done := make(chan bool)
@@ -89,7 +64,6 @@ func TestPanicHandlerSet (T *testing.T) {
 
 	<-done
 }
-
 
 func TestPanicHandlerNotSet (t *testing.T) {
 	done := make(chan bool)
@@ -121,4 +95,36 @@ func TestPanicHandlerPanics (t *testing.T) {
 	})
 
 	<-done
+}
+
+func TestWait (T *testing.T) {
+
+	done := make(chan bool)
+
+	Run(func() {
+		Run(func() {time.Sleep(time.Millisecond*100)})
+		Run(func() {time.Sleep(time.Millisecond*250)})
+		Wait()
+	})
+
+	Run(func() {
+		time.Sleep(time.Millisecond*200)
+	})
+
+	go func() {
+		Wait()
+		done<-true
+	}()
+
+	select {
+		case <-done:
+			T.Errorf("Done early")
+		case <-time.After(time.Millisecond*250):
+			select {
+				case <-done:
+				case <-time.After(time.Millisecond):
+					T.Errorf("Not done")
+			}
+
+	}
 }

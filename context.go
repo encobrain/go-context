@@ -11,20 +11,53 @@ import (
 type context struct {
 	panicHandler 	func (err interface{})
   	vars 			map[string]interface{}
+  	subRuns 		sync.WaitGroup
 
   	sync.RWMutex
 }
 
 var contexts = map[int64]*context{}
-var mu sync.RWMutex
+var mu 		 = sync.RWMutex{}
+var gctx 	 = createContext(goid.GoID(), nil)
 
-func Get (name string) interface{} {
-   	mu.RLock()
-   	ctx := contexts[goid.GoID()]
+func createContext (routineID int64, prevContext *context) (ctx *context) {
+   	if prevContext != nil {
+   		ctx = &context{
+   			panicHandler: 	prevContext.panicHandler,
+   			vars:			prevContext.vars,
+		}
+	} else {
+		ctx = &context{
+			vars: map[string]interface{}{},
+		}
+	}
+
+	mu.Lock()
+	contexts[routineID] = ctx
+   	mu.Unlock()
+
+   	return 
+}
+
+func getContext (routineID int64) (ctx *context) {
+	mu.RLock()
+	ctx = contexts[routineID]
 	mu.RUnlock()
 
-   	if ctx == nil { panic("Context not created") }
+	if ctx == nil { ctx = gctx }
 
+	return 
+}
+
+func deleteContext (routineID int64) {
+  	mu.Lock()
+  	delete(contexts, routineID)
+  	mu.Unlock()
+}
+
+func Get (name string) interface{} {
+   	ctx := getContext(goid.GoID())
+   	
 	ctx.RLock()
 	v := ctx.vars[name]
 	ctx.RUnlock()
@@ -33,11 +66,7 @@ func Get (name string) interface{} {
 }
 
 func Set (name string, value interface{}) {
-	mu.RLock()
-	ctx := contexts[goid.GoID()]
-	mu.RUnlock()
-
-	if ctx == nil { panic("Context not created") }
+	ctx := getContext(goid.GoID())
 
 	ctx.Lock()
 	ctx.vars[name] = value
@@ -46,19 +75,16 @@ func Set (name string, value interface{}) {
 
 // Runs go routine with context. Creates context if not exists before
 func Run (routine func ()) {
-
-   	mu.RLock()
-   	ctx := contexts[goid.GoID()]
-   	mu.RUnlock()
+	ctx := getContext(goid.GoID())
+	
+	ctx.subRuns.Add(1)
 
    	go func() {
 		routineID := goid.GoID()
 
-		if ctx == nil {
-			ctx = &context{
-				vars: map[string]interface{}{},
-			}
-		}
+		defer ctx.subRuns.Done()
+
+		ctx = createContext(routineID, ctx)
 		
    		defer func() {
 			err := recover()
@@ -83,10 +109,8 @@ func Run (routine func ()) {
 					fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 				}
 			}
-
-			mu.Lock()
-			delete(contexts, routineID)
-			mu.Unlock()
+			
+			deleteContext(routineID)
 		}()
 
 		mu.Lock()
@@ -97,13 +121,15 @@ func Run (routine func ()) {
 	}()
 }
 
+func Wait () {
+	ctx := getContext(goid.GoID())
+
+	ctx.subRuns.Wait()
+}
+
 // Sets panic handler & returns previous handler
 func SetPanicHandler (handler func (err interface{})) func(err interface{}) {
-	mu.RLock()
-	ctx := contexts[goid.GoID()]
-	mu.RUnlock()
-
-	if ctx == nil { panic("Context not created") }
+	ctx := getContext(goid.GoID())
 
 	ctx.Lock()
 	prevHandler := ctx.panicHandler
