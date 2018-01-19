@@ -100,6 +100,7 @@ func TestPanicHandlerPanics (t *testing.T) {
 func TestWait (T *testing.T) {
 
 	done := make(chan bool)
+	done2 := make(chan bool)
 
 	Run(func() {
 		Run(func() {time.Sleep(time.Millisecond*100)})
@@ -112,19 +113,22 @@ func TestWait (T *testing.T) {
 	})
 
 	go func() {
-		Wait()
-		done<-true
+		select {
+			case <-done:
+				T.Errorf("Done early")
+			case <-time.After(time.Millisecond*250):
+				select {
+					case <-done:
+					case <-time.After(time.Millisecond):
+						T.Errorf("Not done")
+				}
+
+		}
+
+		close(done2)
 	}()
 
-	select {
-		case <-done:
-			T.Errorf("Done early")
-		case <-time.After(time.Millisecond*250):
-			select {
-				case <-done:
-				case <-time.After(time.Millisecond):
-					T.Errorf("Not done")
-			}
-
-	}
+	Wait()
+	close(done)
+	<-done2
 }

@@ -18,7 +18,6 @@ type context struct {
 
 var contexts = map[int64]*context{}
 var mu 		 = sync.RWMutex{}
-var gctx 	 = createContext(goid.GoID(), nil)
 
 func createContext (routineID int64, prevContext *context) (ctx *context) {
    	if prevContext != nil {
@@ -44,7 +43,7 @@ func getContext (routineID int64) (ctx *context) {
 	ctx = contexts[routineID]
 	mu.RUnlock()
 
-	if ctx == nil { ctx = gctx }
+	if ctx == nil { ctx = createContext(routineID, nil) }
 
 	return 
 }
