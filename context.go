@@ -18,6 +18,7 @@ type context struct {
 
 var contexts = map[int64]*context{}
 var mu 		 = sync.RWMutex{}
+var gctx	 = createContext(goid.GoID(), nil)
 
 func createContext (routineID int64, prevContext *context) (ctx *context) {
    	if prevContext != nil {
@@ -43,9 +44,7 @@ func getContext (routineID int64) (ctx *context) {
 	ctx = contexts[routineID]
 	mu.RUnlock()
 
-	if ctx == nil { ctx = createContext(routineID, nil) }
-
-	return 
+	return
 }
 
 func deleteContext (routineID int64) {
@@ -56,6 +55,8 @@ func deleteContext (routineID int64) {
 
 func Get (name string) interface{} {
    	ctx := getContext(goid.GoID())
+
+	if ctx == nil { ctx = gctx }
    	
 	ctx.RLock()
 	v := ctx.vars[name]
@@ -67,6 +68,8 @@ func Get (name string) interface{} {
 func Set (name string, value interface{}) {
 	ctx := getContext(goid.GoID())
 
+	if ctx == nil { ctx = gctx }
+
 	ctx.Lock()
 	ctx.vars[name] = value
 	ctx.Unlock()
@@ -75,18 +78,28 @@ func Set (name string, value interface{}) {
 // Runs go routine with context. Creates context if not exists before
 func Run (routine func ()) {
 	ctx := getContext(goid.GoID())
-	
-	ctx.subRuns.Add(1)
 
+	if ctx == nil {
+		gctx.subRuns.Add(1)
+	} else {
+		ctx.subRuns.Add(1)
+	}
+	
    	go func() {
 		routineID := goid.GoID()
 
-		defer ctx.subRuns.Done()
-
+		if ctx == nil {
+			defer gctx.subRuns.Done()
+		} else {
+			defer ctx.subRuns.Done()
+		}
+		
 		ctx = createContext(routineID, ctx)
 		
    		defer func() {
 			err := recover()
+
+			defer deleteContext(routineID)
 
    			if err != nil {
    				ctx.RLock()
@@ -108,13 +121,7 @@ func Run (routine func ()) {
 					fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 				}
 			}
-			
-			deleteContext(routineID)
 		}()
-
-		mu.Lock()
-		contexts[routineID] = ctx
-		mu.Unlock()
 
    		routine()
 	}()
@@ -123,12 +130,16 @@ func Run (routine func ()) {
 func Wait () {
 	ctx := getContext(goid.GoID())
 
+	if ctx == nil { ctx = gctx }
+
 	ctx.subRuns.Wait()
 }
 
 // Sets panic handler & returns previous handler
 func SetPanicHandler (handler func (err interface{})) func(err interface{}) {
 	ctx := getContext(goid.GoID())
+
+	if ctx == nil { ctx = gctx }
 
 	ctx.Lock()
 	prevHandler := ctx.panicHandler
