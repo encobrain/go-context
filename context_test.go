@@ -132,3 +132,71 @@ func TestWait (T *testing.T) {
 	close(done)
 	<-done2
 }
+
+func TestAddRemoveCloseHandler (T *testing.T) {
+ 
+	runsCount := 0
+
+	closeHandler := func () {
+		if runsCount != 1 {
+			T.Errorf("Wrong call queue: %d", runsCount)
+		}
+		
+		runsCount++
+	}
+
+	closeHandler2 := func() {
+		if runsCount != 0 {
+			T.Errorf("Wrong call queue: %d", runsCount)
+		}
+		
+		runsCount++
+	}
+
+	closeHandler3 := func() {
+		runsCount++
+	}
+
+	AddCloseHandler(&closeHandler)
+	AddCloseHandler(&closeHandler2)
+
+	Run(func() {
+		AddCloseHandler(&closeHandler)
+		AddCloseHandler(&closeHandler2)
+		AddCloseHandler(&closeHandler3)
+
+		Run(func() {
+			RemoveCloseHandler(&closeHandler3)
+		})
+	})
+	
+	Wait()
+	
+	if runsCount != 2 {
+		T.Errorf("Runs count incorrect: %d", runsCount)
+	}
+}
+
+func TestCloseHandlerPanics (T *testing.T) {
+	panicHandlerCalled := false
+
+	SetPanicHandler(func(err interface{}) {
+		panicHandlerCalled = true
+
+		panic("Panic in panic handler should prints to stdout with stack")
+	})
+
+	closeHandler := func() {
+		panic("Panic should calls panicHandler")
+	}
+
+	AddCloseHandler(&closeHandler)
+
+	Run(func() {})
+
+	Wait()
+
+	if panicHandlerCalled != true {
+		T.Errorf("Panic handler not called")
+	}
+}

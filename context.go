@@ -6,12 +6,15 @@ import (
 	"runtime/debug"
 	
 	"github.com/t-yuki/goid"
+	"sync/atomic"
 )
 
 type context struct {
 	panicHandler 	func (err interface{})
   	vars 			map[string]interface{}
   	subRuns 		sync.WaitGroup
+  	runs 			*int64
+  	closeHandlers	*[]*func()
 
   	sync.RWMutex
 }
@@ -25,10 +28,17 @@ func createContext (routineID int64, prevContext *context) (ctx *context) {
    		ctx = &context{
    			panicHandler: 	prevContext.panicHandler,
    			vars:			prevContext.vars,
+   			runs:			prevContext.runs,
+   			closeHandlers:  prevContext.closeHandlers,
 		}
 	} else {
+		runs := int64(0)
+		closeHandlers := make([]*func(),0)
+		
 		ctx = &context{
-			vars: map[string]interface{}{},
+			vars: 			map[string]interface{}{},
+			runs: 			&runs,
+			closeHandlers: 	&closeHandlers,
 		}
 	}
 
@@ -77,49 +87,87 @@ func Set (name string, value interface{}) {
 
 // Runs go routine with context. Creates context if not exists before
 func Run (routine func ()) {
-	ctx := getContext(goid.GoID())
-
-	if ctx == nil {
+	pctx := getContext(goid.GoID())
+	
+	if pctx == nil {
 		gctx.subRuns.Add(1)
+		atomic.AddInt64(gctx.runs,1)
 	} else {
-		ctx.subRuns.Add(1)
+		pctx.subRuns.Add(1)
+		atomic.AddInt64(pctx.runs,1)
 	}
 	
    	go func() {
 		routineID := goid.GoID()
+		ctx := createContext(routineID, pctx)
+		defer deleteContext(routineID)
 
-		if ctx == nil {
-			defer gctx.subRuns.Done()
-		} else {
-			defer ctx.subRuns.Done()
-		}
-		
-		ctx = createContext(routineID, ctx)
+		if pctx == nil { pctx = gctx }
+
+		defer pctx.subRuns.Done()
 		
    		defer func() {
+			defer func() {
+				if atomic.AddInt64(pctx.runs, -1) != 0 { return }
+
+				defer func() {
+					err := recover()
+
+					if err == nil { return }
+
+					pctx.RLock()
+					panicHandler := pctx.panicHandler
+					pctx.RUnlock()
+
+					if panicHandler != nil {
+						defer func() {
+							perr := recover()
+
+							if perr != nil {
+								fmt.Printf("CLOSE_HANDLER's PANIC: %s\n", err)
+								fmt.Printf("PANIC_HANDLER's PANIC: %s\n%s\n", perr, debug.Stack())
+							}
+						}()
+
+						panicHandler(err)
+					} else {
+						fmt.Printf("CLOSE_HANDLER's PANIC: %s\n%s\n", err, debug.Stack())
+					}
+
+				}()
+
+				pctx.Lock(); defer pctx.Unlock()
+
+				l := len(*pctx.closeHandlers)
+
+				for l > 0 {
+					l--
+					ph := (*pctx.closeHandlers)[l]
+					(*ph)()
+				}
+			}()
+
 			err := recover()
 
-			defer deleteContext(routineID)
+   			if err == nil { return }
+   			
+			ctx.RLock()
+			panicHandler := ctx.panicHandler
+			ctx.RUnlock()
 
-   			if err != nil {
-   				ctx.RLock()
-   				panicHandler := ctx.panicHandler
-				ctx.RUnlock()
-				
-			 	if panicHandler != nil {
-			 		defer func() {
-			 			perr := recover()
+			if panicHandler != nil {
+				defer func() {
+					perr := recover()
 
-			 			if perr != nil {
-							fmt.Printf("ROUTINE PANIC: %s\n", err)
-							fmt.Printf("PANIC_HANDLER's PANIC: %s\n%s\n", perr, debug.Stack())
-						}
-					}()
+					if perr != nil {
+						fmt.Printf("ROUTINE PANIC: %s\n", err)
+						fmt.Printf("PANIC_HANDLER's PANIC: %s\n%s\n", perr, debug.Stack())
+					}
+				}()
 
-			 		panicHandler(err)
-				} else {
-					fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
-				}
+				panicHandler(err)
+			} else {
+				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 			}
 		}()
 
@@ -147,5 +195,34 @@ func SetPanicHandler (handler func (err interface{})) func(err interface{}) {
 	ctx.Unlock()
 
 	return prevHandler
+}
+
+func AddCloseHandler (handler *func()) {
+	ctx := getContext(goid.GoID())
+
+	if ctx == nil { ctx = gctx }
+	
+	ctx.Lock(); defer ctx.Unlock()
+	
+   	for _,h := range *ctx.closeHandlers {
+   		if h == handler { return }
+	}
+
+	*ctx.closeHandlers = append(*ctx.closeHandlers, handler)
+}
+
+func RemoveCloseHandler (handler *func()) {
+	ctx := getContext(goid.GoID())
+
+	if ctx == nil { ctx = gctx }
+
+	ctx.Lock(); defer ctx.Unlock()
+
+	for i,h := range *ctx.closeHandlers {
+		if h == handler {
+			*ctx.closeHandlers = append((*ctx.closeHandlers)[:i], (*ctx.closeHandlers)[i+1:]...)
+			break
+		}
+	}
 }
 
