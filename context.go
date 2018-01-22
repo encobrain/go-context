@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	
 	"github.com/t-yuki/goid"
-	"github.com/encobrain/emitter"
+	"github.com/olebedev/emitter"
 )
 
 type context struct {
