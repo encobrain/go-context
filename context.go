@@ -85,7 +85,8 @@ func Set (name string, value interface{}) {
 	ctx.Unlock()
 }
 
-// Runs go routine with context. Creates context if not exists before
+// Runs go routine with context. Uses global context if not exists before
+// affects on context.Wait() and run CloseHandlers
 func Run (routine func ()) {
 	pctx := getContext(goid.GoID())
 	
@@ -172,6 +173,45 @@ func Run (routine func ()) {
 		}()
 
    		routine()
+	}()
+}
+
+// Runs go routine with context. Uses global context if not exists before
+// Does not affects on context.Wait() and run CloseHandlers
+func RunHeir (routine func()) {
+	pctx := getContext(goid.GoID())
+
+	go func() {
+		routineID := goid.GoID()
+		ctx := createContext(routineID, pctx)
+		defer deleteContext(routineID)
+
+		defer func() {
+			err := recover()
+
+			if err == nil { return }
+
+			ctx.RLock()
+			panicHandler := ctx.panicHandler
+			ctx.RUnlock()
+
+			if panicHandler != nil {
+				defer func() {
+					perr := recover()
+
+					if perr != nil {
+						fmt.Printf("ROUTINE PANIC: %s\n", err)
+						fmt.Printf("PANIC_HANDLER's PANIC: %s\n%s\n", perr, debug.Stack())
+					}
+				}()
+
+				panicHandler(err)
+			} else {
+				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
+			}
+		}()
+
+		routine()
 	}()
 }
 
