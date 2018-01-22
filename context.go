@@ -4,9 +4,10 @@ import (
 	"sync"
 	"fmt"
 	"runtime/debug"
+	"sync/atomic"
 	
 	"github.com/t-yuki/goid"
-	"sync/atomic"
+	"github.com/encobrain/emitter"
 )
 
 type context struct {
@@ -17,6 +18,7 @@ type context struct {
   	closeHandlers	*[]*func()
 
   	sync.RWMutex
+  	emitter.Emitter
 }
 
 var contexts = map[int64]*context{}
@@ -83,6 +85,24 @@ func Set (name string, value interface{}) {
 	ctx.Lock()
 	ctx.vars[name] = value
 	ctx.Unlock()
+
+	ctx.Emit("SET:"+name, value)
+}
+
+func OnSet (name string) <-chan emitter.Event {
+	ctx := getContext(goid.GoID())
+
+	if ctx == nil { ctx = gctx }
+
+	return ctx.On("SET:"+name)
+}
+
+func OffSet (name string, ch <-chan emitter.Event) {
+	ctx := getContext(goid.GoID())
+
+	if ctx == nil { ctx = gctx }
+
+	ctx.Off("SET:"+name, ch)
 }
 
 // Runs go routine with context. Uses global context if not exists before
