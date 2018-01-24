@@ -3,6 +3,7 @@ package context
 import (
 	"testing"
 	"time"
+	"runtime/debug"
 )
 
 func TestGetNoRun (T *testing.T) {
@@ -134,69 +135,76 @@ func TestWait (T *testing.T) {
 }
 
 func TestAddRemoveCloseHandler (T *testing.T) {
- 
-	runsCount := 0
+	done := make(chan int, 10)
+
+	SetPanicHandler(func(err interface{}) {
+		T.Errorf("PANIC: %s\nStack: %s", err, debug.Stack())
+	})
 
 	closeHandler := func () {
-		if runsCount != 1 {
-			T.Errorf("Wrong call queue: %d", runsCount)
-		}
-		
-		runsCount++
+		done<- 5
+		go close(done)
 	}
 
 	closeHandler2 := func() {
-		if runsCount != 0 {
-			T.Errorf("Wrong call queue: %d", runsCount)
-		}
-		
-		runsCount++
+		done<- 4
 	}
 
 	closeHandler3 := func() {
-		runsCount++
+		done<- 0
 	}
 
 	AddCloseHandler(&closeHandler)
 	AddCloseHandler(&closeHandler2)
 
 	Run(func() {
+		done<- 1
 		AddCloseHandler(&closeHandler)
 		AddCloseHandler(&closeHandler2)
 		AddCloseHandler(&closeHandler3)
 
 		Run(func() {
+			done<- 3
 			RemoveCloseHandler(&closeHandler3)
 		})
+
+		done<- 2
 	})
-	
-	Wait()
-	
-	if runsCount != 2 {
-		T.Errorf("Runs count incorrect: %d", runsCount)
+
+	si := 1
+	for i := range done {
+		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
+		si++
 	}
 }
 
 func TestCloseHandlerPanics (T *testing.T) {
-	panicHandlerCalled := false
+	done := make(chan int, 10)
 
 	SetPanicHandler(func(err interface{}) {
-		panicHandlerCalled = true
+		done<- 3
+		
+		go close(done)
 
 		panic("Panic in panic handler should prints to stdout with stack")
 	})
 
 	closeHandler := func() {
+		done<- 2
 		panic("Panic should calls panicHandler")
 	}
 
 	AddCloseHandler(&closeHandler)
 
-	Run(func() {})
+	Run(func() {
+		done<- 1
+	})
 
-	Wait()
-
-	if panicHandlerCalled != true {
-		T.Errorf("Panic handler not called")
+	si := 1
+	for i := range done {
+		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
+		si++
 	}
+
+	time.Sleep(time.Millisecond*50)
 }

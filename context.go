@@ -110,64 +110,41 @@ func OffSet (name string, ch <-chan emitter.Event) {
 func Run (routine func ()) {
 	pctx := getContext(goid.GoID())
 	
-	if pctx == nil {
-		gctx.subRuns.Add(1)
-		atomic.AddInt64(gctx.runs,1)
-	} else {
-		pctx.subRuns.Add(1)
-		atomic.AddInt64(pctx.runs,1)
-	}
+	if pctx == nil { pctx = gctx }
+	
+	pctx.subRuns.Add(1)
+	atomic.AddInt64(pctx.runs,1)
 	
    	go func() {
 		routineID := goid.GoID()
 		ctx := createContext(routineID, pctx)
 		defer deleteContext(routineID)
 
-		if pctx == nil { pctx = gctx }
+		if pctx == gctx { ctx.vars = map[string]interface{}{} }
+
+		defer func() {
+			runs := atomic.AddInt64(pctx.runs, -1)
+
+			if runs < 0 { panic(fmt.Errorf("Runs count negative : %d", runs)) }
+
+			if runs != 0 { return }
+
+			pctx.Lock(); defer pctx.Unlock()
+
+			l := len(*pctx.closeHandlers)
+
+			if l > 0 {
+				l--
+				ph := (*pctx.closeHandlers)[l]
+				*pctx.closeHandlers = (*pctx.closeHandlers)[:l]
+				
+				Run(*ph)
+			}
+		}()
 
 		defer pctx.subRuns.Done()
 		
    		defer func() {
-			defer func() {
-				if atomic.AddInt64(pctx.runs, -1) != 0 { return }
-
-				defer func() {
-					err := recover()
-
-					if err == nil { return }
-
-					pctx.RLock()
-					panicHandler := pctx.panicHandler
-					pctx.RUnlock()
-
-					if panicHandler != nil {
-						defer func() {
-							perr := recover()
-
-							if perr != nil {
-								fmt.Printf("CLOSE_HANDLER's PANIC: %s\n", err)
-								fmt.Printf("PANIC_HANDLER's PANIC: %s\n%s\n", perr, debug.Stack())
-							}
-						}()
-
-						panicHandler(err)
-					} else {
-						fmt.Printf("CLOSE_HANDLER's PANIC: %s\n%s\n", err, debug.Stack())
-					}
-
-				}()
-
-				pctx.Lock(); defer pctx.Unlock()
-
-				l := len(*pctx.closeHandlers)
-
-				for l > 0 {
-					l--
-					ph := (*pctx.closeHandlers)[l]
-					(*ph)()
-				}
-			}()
-
 			err := recover()
 
    			if err == nil { return }
@@ -191,7 +168,7 @@ func Run (routine func ()) {
 				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 			}
 		}()
-
+		
    		routine()
 	}()
 }
@@ -201,10 +178,14 @@ func Run (routine func ()) {
 func RunHeir (routine func()) {
 	pctx := getContext(goid.GoID())
 
+	if pctx == nil { pctx = gctx }
+
 	go func() {
 		routineID := goid.GoID()
 		ctx := createContext(routineID, pctx)
 		defer deleteContext(routineID)
+
+		if pctx == gctx { ctx.vars = map[string]interface{}{} }
 
 		defer func() {
 			err := recover()
