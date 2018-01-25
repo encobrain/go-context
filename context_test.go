@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 	"runtime/debug"
+	"fmt"
 )
 
 func TestGetNoRun (T *testing.T) {
@@ -265,7 +266,7 @@ func TestSeparatePanic (T *testing.T) {
 				T.Fatalf("Incorrect err: %s", err)
 			}
 
-			done<- 7
+			done<- 8
 			close(done)
 		})
 
@@ -273,32 +274,41 @@ func TestSeparatePanic (T *testing.T) {
 			done<- 3
 			Separate()
 
-			SetPanicHandler(func(err interface{}) {
-				if err != "panic in separate context" {
-					T.Fatalf("Incorrect err: %s", err)
-				}
+			Run(func() {
+				done<- 4
+				SetPanicHandler(func(err interface{}) {
+					if err != "panic in separate context" {
+						T.Fatalf("Incorrect err: %s", err)
+					}
 
-				done<- 6
+					done<- 7
+				})
 			})
 
+			Wait()
+			
 			Run(func() {
-				done<- 5
+				done<- 6
 				panic("panic in separate context")
 			})
 
-			done<- 4
+			done<- 5
 		})
 
 		done<- 2
 
 		Wait()
 
-		panic("panic in context")
+		Run(func() {
+			Separate()
+			panic("panic in context")
+		})
 	})
 
 	si := 1
 	for i := range done {
 		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
+		fmt.Println("done", i)
 		si++
 	}
 }

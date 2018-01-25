@@ -11,7 +11,7 @@ import (
 )
 
 type context struct {
-	panicHandler 	func (err interface{})
+	panicHandler 	*func (err interface{})
   	vars 			map[string]interface{}
   	subRuns 		sync.WaitGroup
   	runs 			*int64
@@ -174,7 +174,9 @@ func Run (routine func ()) {
 					}
 				}()
 
-				panicHandler(err)
+				fmt.Println("CALLPH", *panicHandler)
+
+				(*panicHandler)(err)
 			} else {
 				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 			}
@@ -218,7 +220,7 @@ func RunHeir (routine func()) {
 					}
 				}()
 
-				panicHandler(err)
+				(*panicHandler)(err)
 			} else {
 				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 			}
@@ -243,12 +245,21 @@ func SetPanicHandler (handler func (err interface{})) func(err interface{}) {
 
 	if ctx == nil { ctx = gctx }
 
+	fmt.Println("SETPH", handler)
+
 	ctx.Lock()
 	prevHandler := ctx.panicHandler
-	ctx.panicHandler = handler
+
+	if prevHandler == nil {
+		ctx.panicHandler = &handler
+	} else {
+		*ctx.panicHandler = handler
+	}
+
 	ctx.Unlock()
 
-	return prevHandler
+	if prevHandler == nil { return nil }
+	return *prevHandler
 }
 
 // Adds close handler.
@@ -303,5 +314,10 @@ func Separate () {
 	ctx.closeHandlers = &closeHandlers
 
 	ctx.emitter = &emitter.Emitter{}
+
+	if ctx.panicHandler != nil {
+		handler := *ctx.panicHandler
+		ctx.panicHandler = &handler
+	}
 }
 
