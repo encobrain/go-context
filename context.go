@@ -90,7 +90,7 @@ func Set (name string, value interface{}) {
 	ctx.vars[name] = value
 	ctx.Unlock()
 
-	ctx.emitter.Emit("SET:"+name, value)
+	<-ctx.emitter.Emit("SET:"+name, value)
 }
 
 // Subscribes on event variable set
