@@ -208,3 +208,48 @@ func TestCloseHandlerPanics (T *testing.T) {
 
 	time.Sleep(time.Millisecond*50)
 }
+
+func TestSeparate (T *testing.T) {
+ 	done := make(chan int)
+
+ 	Run(func() {
+		Set("testVar", "foo")
+
+		close1 := func() {
+			done<- 5
+			close(done)
+		}
+
+		AddCloseHandler(&close1)
+
+		Run(func() {
+			done<- 2
+
+			Separate()
+
+			testVar := Get("testVar")
+
+			if testVar != nil {
+				T.Fatalf("Not separated")
+			}
+
+			close2 := func () {
+				done<- 3
+			}
+
+			AddCloseHandler(&close2)
+		})
+
+		done<- 1
+
+		Wait()
+
+		done<- 4
+	})
+
+	si := 1
+	for i := range done {
+		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
+		si++
+	}
+}

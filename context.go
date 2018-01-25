@@ -116,10 +116,10 @@ func Run (routine func ()) {
 	pctx := getContext(goid.GoID())
 	
 	if pctx == nil { pctx = gctx }
-	
+
 	pctx.subRuns.Add(1)
-	atomic.AddInt64(pctx.runs,1)
-	
+	atomic.AddInt64(pctx.runs, 1)
+
    	go func() {
 		routineID := goid.GoID()
 		ctx := createContext(routineID, pctx)
@@ -127,33 +127,39 @@ func Run (routine func ()) {
 
 		if pctx == gctx { ctx.vars = map[string]interface{}{} }
 
+		atomic.AddInt64(ctx.runs, 1)
+
+		defer pctx.subRuns.Done()
+		
 		defer func() {
-			runs := atomic.AddInt64(pctx.runs, -1)
+			runs := atomic.AddInt64(ctx.runs, -1)
 
 			if runs < 0 { panic(fmt.Errorf("Runs count negative : %d", runs)) }
 
 			if runs != 0 { return }
 
-			pctx.Lock(); defer pctx.Unlock()
+			ctx.Lock(); defer ctx.Unlock()
 
-			l := len(*pctx.closeHandlers)
+			l := len(*ctx.closeHandlers)
 
-			if l > 0 {
-				l--
-				ph := (*pctx.closeHandlers)[l]
-				*pctx.closeHandlers = (*pctx.closeHandlers)[:l]
-				
-				Run(*ph)
-			}
+			if l == 0 { return  }
+
+			l--
+			ph := (*ctx.closeHandlers)[l]
+			*ctx.closeHandlers = (*ctx.closeHandlers)[:l]
+
+			Run(*ph)
+
+			ctx.subRuns.Wait()
 		}()
 
-		defer pctx.subRuns.Done()
+		defer atomic.AddInt64(pctx.runs,-1)
 
    		defer func() {
 			err := recover()
 
    			if err == nil { return }
-   			
+
 			ctx.RLock()
 			panicHandler := ctx.panicHandler
 			ctx.RUnlock()
@@ -173,7 +179,7 @@ func Run (routine func ()) {
 				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 			}
 		}()
-		
+
    		routine()
 	}()
 }
@@ -278,8 +284,8 @@ func RemoveCloseHandler (handler *func()) {
 }
 
 // Separates current context from parent.
-// WARN!!! Should call before use any Runs.
-// Sets in current context new runs & vars.
+// WARN!!! Should call BEFORE use any Runs.
+// Sets in current context new runs & vars & closeHandlers.
 func Separate () {
 	ctx := getContext(goid.GoID())
 
@@ -288,7 +294,12 @@ func Separate () {
 	ctx.Lock(); defer ctx.Unlock()
 
 	ctx.vars = map[string]interface{}{}
-	var runs int64
+
+	atomic.AddInt64(ctx.runs, -1)
+	runs := int64(1)
 	ctx.runs = &runs
+
+	closeHandlers := make([]*func(),0)
+	ctx.closeHandlers = &closeHandlers
 }
 
