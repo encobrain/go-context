@@ -65,6 +65,7 @@ func deleteContext (routineID int64) {
   	mu.Unlock()
 }
 
+// Gets variable from current context
 func Get (name string) interface{} {
    	ctx := getContext(goid.GoID())
 
@@ -77,6 +78,7 @@ func Get (name string) interface{} {
 	return v
 }
 
+// Sets variable to current context
 func Set (name string, value interface{}) {
 	ctx := getContext(goid.GoID())
 
@@ -89,6 +91,7 @@ func Set (name string, value interface{}) {
 	ctx.Emit("SET:"+name, value)
 }
 
+// Subscribes on event variable set
 func OnSet (name string) <-chan emitter.Event {
 	ctx := getContext(goid.GoID())
 
@@ -97,6 +100,7 @@ func OnSet (name string) <-chan emitter.Event {
 	return ctx.On("SET:"+name)
 }
 
+// Removes susbscribe on event variable set
 func OffSet (name string, ch <-chan emitter.Event) {
 	ctx := getContext(goid.GoID())
 
@@ -105,8 +109,9 @@ func OffSet (name string, ch <-chan emitter.Event) {
 	ctx.Off("SET:"+name, ch)
 }
 
-// Runs go routine with context. Uses global context if not exists before
-// affects on context.Wait() and run CloseHandlers
+// Runs go routine with context.
+// Uses global context if not exists before & sets new vars.
+// affects on context.Wait() and run CloseHandlers.
 func Run (routine func ()) {
 	pctx := getContext(goid.GoID())
 	
@@ -143,7 +148,7 @@ func Run (routine func ()) {
 		}()
 
 		defer pctx.subRuns.Done()
-		
+
    		defer func() {
 			err := recover()
 
@@ -173,8 +178,9 @@ func Run (routine func ()) {
 	}()
 }
 
-// Runs go routine with context. Uses global context if not exists before
-// Does not affects on context.Wait() and run CloseHandlers
+// Runs go routine with context.
+// Uses global context if not exists before & set new vars.
+// Does not affects on context.Wait() and run CloseHandlers.
 func RunHeir (routine func()) {
 	pctx := getContext(goid.GoID())
 
@@ -216,6 +222,7 @@ func RunHeir (routine func()) {
 	}()
 }
 
+// Waits for end all sub runs
 func Wait () {
 	ctx := getContext(goid.GoID())
 
@@ -238,6 +245,8 @@ func SetPanicHandler (handler func (err interface{})) func(err interface{}) {
 	return prevHandler
 }
 
+// Adds close handler.
+// Close handler will runs after ends all runs in context
 func AddCloseHandler (handler *func()) {
 	ctx := getContext(goid.GoID())
 
@@ -252,6 +261,7 @@ func AddCloseHandler (handler *func()) {
 	*ctx.closeHandlers = append(*ctx.closeHandlers, handler)
 }
 
+// removes close handler
 func RemoveCloseHandler (handler *func()) {
 	ctx := getContext(goid.GoID())
 
@@ -265,5 +275,20 @@ func RemoveCloseHandler (handler *func()) {
 			break
 		}
 	}
+}
+
+// Separates current context from parent.
+// WARN!!! Should call before use any Runs.
+// Sets in current context new runs & vars.
+func Separate () {
+	ctx := getContext(goid.GoID())
+
+	if ctx == nil { panic("Context not runned") }
+
+	ctx.Lock(); defer ctx.Unlock()
+
+	ctx.vars = map[string]interface{}{}
+	var runs int64
+	ctx.runs = &runs
 }
 
