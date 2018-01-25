@@ -110,7 +110,7 @@ func OffSet (name string, ch <-chan emitter.Event) {
 }
 
 // Runs go routine with context.
-// Uses global context if not exists before & sets new vars.
+// Uses global context if not exists before
 // affects on context.Wait() and run CloseHandlers.
 func Run (routine func ()) {
 	pctx := getContext(goid.GoID())
@@ -124,8 +124,6 @@ func Run (routine func ()) {
 		routineID := goid.GoID()
 		ctx := createContext(routineID, pctx)
 		defer deleteContext(routineID)
-
-		if pctx == gctx { ctx.vars = map[string]interface{}{} }
 
 		atomic.AddInt64(ctx.runs, 1)
 
