@@ -130,6 +130,8 @@ func Run (routine func ()) {
 		atomic.AddInt64(ctx.runs, 1)
 
 		defer pctx.subRuns.Done()
+
+		defer ctx.subRuns.Wait()
 		
 		defer func() {
 			runs := atomic.AddInt64(ctx.runs, -1)
@@ -149,8 +151,6 @@ func Run (routine func ()) {
 			*ctx.closeHandlers = (*ctx.closeHandlers)[:l]
 
 			Run(*ph)
-
-			ctx.subRuns.Wait()
 		}()
 
 		defer atomic.AddInt64(pctx.runs,-1)

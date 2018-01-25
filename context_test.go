@@ -253,3 +253,52 @@ func TestSeparate (T *testing.T) {
 		si++
 	}
 }
+
+func TestSeparatePanic (T *testing.T) {
+	done := make(chan int)
+
+	Run(func() {
+		done<- 1
+
+		SetPanicHandler(func(err interface{}) {
+			if err != "panic in context" {
+				T.Fatalf("Incorrect err: %s", err)
+			}
+
+			done<- 7
+			close(done)
+		})
+
+		Run(func() {
+			done<- 3
+			Separate()
+
+			SetPanicHandler(func(err interface{}) {
+				if err != "panic in separate context" {
+					T.Fatalf("Incorrect err: %s", err)
+				}
+
+				done<- 6
+			})
+
+			Run(func() {
+				done<- 5
+				panic("panic in separate context")
+			})
+
+			done<- 4
+		})
+
+		done<- 2
+
+		Wait()
+
+		panic("panic in context")
+	})
+
+	si := 1
+	for i := range done {
+		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
+		si++
+	}
+}
