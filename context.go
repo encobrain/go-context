@@ -16,9 +16,9 @@ type context struct {
   	subRuns 		sync.WaitGroup
   	runs 			*int64
   	closeHandlers	*[]*func()
-
+	emitter 		*emitter.Emitter
+	
   	sync.RWMutex
-  	emitter.Emitter
 }
 
 var contexts = map[int64]*context{}
@@ -32,6 +32,7 @@ func createContext (routineID int64, prevContext *context) (ctx *context) {
    			vars:			prevContext.vars,
    			runs:			prevContext.runs,
    			closeHandlers:  prevContext.closeHandlers,
+   			emitter: 		prevContext.emitter,
 		}
 	} else {
 		runs := int64(0)
@@ -41,6 +42,7 @@ func createContext (routineID int64, prevContext *context) (ctx *context) {
 			vars: 			map[string]interface{}{},
 			runs: 			&runs,
 			closeHandlers: 	&closeHandlers,
+			emitter: 		&emitter.Emitter{},
 		}
 	}
 
@@ -88,7 +90,7 @@ func Set (name string, value interface{}) {
 	ctx.vars[name] = value
 	ctx.Unlock()
 
-	ctx.Emit("SET:"+name, value)
+	ctx.emitter.Emit("SET:"+name, value)
 }
 
 // Subscribes on event variable set
@@ -97,7 +99,7 @@ func OnSet (name string) <-chan emitter.Event {
 
 	if ctx == nil { ctx = gctx }
 
-	return ctx.On("SET:"+name)
+	return ctx.emitter.On("SET:"+name)
 }
 
 // Removes susbscribe on event variable set
@@ -106,7 +108,7 @@ func OffSet (name string, ch <-chan emitter.Event) {
 
 	if ctx == nil { ctx = gctx }
 
-	ctx.Off("SET:"+name, ch)
+	ctx.emitter.Off("SET:"+name, ch)
 }
 
 // Runs go routine with context.
@@ -283,7 +285,7 @@ func RemoveCloseHandler (handler *func()) {
 
 // Separates current context from parent.
 // WARN!!! Should call BEFORE use any Runs.
-// Sets in current context new runs & vars & closeHandlers.
+// Sets in current context new runs & vars & closeHandlers & emitter.
 func Separate () {
 	ctx := getContext(goid.GoID())
 
@@ -299,5 +301,7 @@ func Separate () {
 
 	closeHandlers := make([]*func(),0)
 	ctx.closeHandlers = &closeHandlers
+
+	ctx.emitter = &emitter.Emitter{}
 }
 
