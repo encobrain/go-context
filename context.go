@@ -174,8 +174,6 @@ func Run (routine func ()) {
 					}
 				}()
 
-				fmt.Println("CALLPH", *panicHandler)
-
 				(*panicHandler)(err)
 			} else {
 				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
@@ -244,8 +242,6 @@ func SetPanicHandler (handler func (err interface{})) func(err interface{}) {
 	ctx := getContext(goid.GoID())
 
 	if ctx == nil { ctx = gctx }
-
-	fmt.Println("SETPH", handler)
 
 	ctx.Lock()
 	prevHandler := ctx.panicHandler
