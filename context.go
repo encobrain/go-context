@@ -10,310 +10,323 @@ import (
 	"github.com/olebedev/emitter"
 )
 
+const EV_RUN_DONE		 = "runDone"
+const EV_CLOSED 		 = "closed"
+const EV_VARS_SET_PREFIX = "SET:"
+
 type context struct {
-	panicHandler 	*func (err interface{})
-  	vars 			map[string]interface{}
-  	subRuns 		sync.WaitGroup
-  	runs 			*int64
-  	closeHandlers	*[]*func()
-	emitter 		*emitter.Emitter
-	
-  	sync.RWMutex
+	parent        *context
+	panicHandler  *func (err interface{})
+
+	separated	  bool
+	vars          map[string]interface{}
+  	vars_em       *emitter.Emitter
+  	runs          int64
+  	closeHandlers *[]*func()
+
+	emitter.Emitter
+  	sync.Mutex
 }
 
-var contexts = map[int64]*context{}
-var mu 		 = sync.RWMutex{}
-var gctx	 = createContext(goid.GoID(), nil)
+func (c *context) separate () {
+	c.Lock()
+	c.separated=true
+	c.vars 	= map[string]interface{}{}
+	c.vars_em = &emitter.Emitter{}
+	ph := *c.panicHandler
+	c.panicHandler = &ph
+	c.closeHandlers = &[]*func(){}
+	c.Unlock()
+}
 
-func createContext (routineID int64, prevContext *context) (ctx *context) {
-   	if prevContext != nil {
-   		ctx = &context{
-   			panicHandler: 	prevContext.panicHandler,
-   			vars:			prevContext.vars,
-   			runs:			prevContext.runs,
-   			closeHandlers:  prevContext.closeHandlers,
-   			emitter: 		prevContext.emitter,
-		}
+func (c *context) setPanicHandler (handler func(err interface{}), local bool) (prevHandler func(err interface{})) {
+	c.Lock()
+	prevHandler = *c.panicHandler
+
+	if local {
+		c.panicHandler = &handler
 	} else {
-		runs := int64(0)
-		closeHandlers := make([]*func(),0)
-		
-		ctx = &context{
-			vars: 			map[string]interface{}{},
-			runs: 			&runs,
-			closeHandlers: 	&closeHandlers,
-			emitter: 		&emitter.Emitter{},
+		*c.panicHandler = handler
+	}
+
+	c.Unlock()
+	
+	return
+}
+
+func (c *context) handlePanic (err interface {}) {
+
+	ctx := c
+	handler := ctx.panicHandler
+
+	defer func () {
+		err = recover()
+
+		if err != nil {
+			for ctx != nil && handler == ctx.panicHandler && !ctx.separated {
+				ctx = ctx.parent
+			}
+
+			if ctx != nil && ctx.panicHandler != nil && handler != ctx.panicHandler {
+				ctx.handlePanic(err)
+			} else {
+				(*getDefaultPanicHandler())(err)
+			}
+		}
+	}()
+	
+	(*handler)(err)
+}
+
+func (c *context) get (varName string) (value interface{}) {
+	c.Lock()
+	value = c.vars[varName]
+	c.Unlock()
+	return 
+}
+
+func (c *context) set (varName string, value interface{}) {
+	c.Lock()
+	c.vars[varName] = value
+	c.Unlock()
+
+	<-c.vars_em.Emit(EV_VARS_SET_PREFIX+varName, value)
+}
+
+func (c *context) onSet (varName string) <-chan emitter.Event {
+	return c.vars_em.On(EV_VARS_SET_PREFIX+varName)
+}
+
+func (c *context) offSet (varName string, ch <-chan emitter.Event) {
+	c.vars_em.Off(EV_VARS_SET_PREFIX+varName, ch)
+}
+
+func (c *context) addCloseHandler (handler *func(), local bool) {
+	c.Lock(); defer c.Unlock()
+
+	if local {
+		if c.closeHandlers == c.parent.closeHandlers {
+			hs := make([]*func(),0)
+			c.closeHandlers = &hs
 		}
 	}
 
-	mu.Lock()
-	contexts[routineID] = ctx
-   	mu.Unlock()
+	for _,h := range *c.closeHandlers {
+		if h == handler { return }
+	}
 
-   	return 
+	*c.closeHandlers = append(*c.closeHandlers, handler)
 }
 
-func getContext (routineID int64) (ctx *context) {
-	mu.RLock()
-	ctx = contexts[routineID]
-	mu.RUnlock()
+func (c *context) removeCloseHandler (handler *func()) {
+	c.Lock(); defer c.Unlock()
+
+	for i,h := range *c.closeHandlers {
+		if h == handler {
+			*c.closeHandlers = append((*c.closeHandlers)[:i], (*c.closeHandlers)[i+1:]...)
+			break
+		}
+	}
+}
+
+func (c *context) close () (closing bool) {
+	c.Lock(); defer c.Unlock()
+
+	if c.closeHandlers == c.parent.closeHandlers { return } // not root
+
+	chl := len(*c.closeHandlers)
+
+	if chl != 0 {
+		chl--
+		h := (*c.closeHandlers)[chl]
+		*c.closeHandlers = (*c.closeHandlers)[:chl]
+
+		c.run(*h, false)
+		return true
+	}
 
 	return
 }
 
-func deleteContext (routineID int64) {
-  	mu.Lock()
-  	delete(contexts, routineID)
-  	mu.Unlock()
+func (c *context) wait () {
+	atomic.AddInt64(&c.runs,1)
+
+	for atomic.LoadInt64(&c.runs) != 1 {
+		<-c.Once(EV_RUN_DONE)
+	}
+
+	atomic.AddInt64(&c.runs,-1)
 }
 
-// Gets variable from current context
-func Get (name string) interface{} {
-   	ctx := getContext(goid.GoID())
-
-	if ctx == nil { ctx = gctx }
-   	
-	ctx.RLock()
-	v := ctx.vars[name]
-	ctx.RUnlock()
-	
-	return v
-}
-
-// Sets variable to current context
-func Set (name string, value interface{}) {
-	ctx := getContext(goid.GoID())
-
-	if ctx == nil { ctx = gctx }
-
-	ctx.Lock()
-	ctx.vars[name] = value
-	ctx.Unlock()
-
-	<-ctx.emitter.Emit("SET:"+name, value)
-}
-
-// Subscribes on event variable set
-func OnSet (name string) <-chan emitter.Event {
-	ctx := getContext(goid.GoID())
-
-	if ctx == nil { ctx = gctx }
-
-	return ctx.emitter.On("SET:"+name)
-}
-
-// Removes susbscribe on event variable set
-func OffSet (name string, ch <-chan emitter.Event) {
-	ctx := getContext(goid.GoID())
-
-	if ctx == nil { ctx = gctx }
-
-	ctx.emitter.Off("SET:"+name, ch)
-}
-
-// Runs go routine with context.
-// Uses global context if not exists before
-// affects on context.Wait() and run CloseHandlers.
-func Run (routine func ()) {
-	pctx := getContext(goid.GoID())
-	
-	if pctx == nil { pctx = gctx }
-
-	pctx.subRuns.Add(1)
-	atomic.AddInt64(pctx.runs, 1)
-
-   	go func() {
-		routineID := goid.GoID()
-		ctx := createContext(routineID, pctx)
-		defer deleteContext(routineID)
-
-		atomic.AddInt64(ctx.runs, 1)
-
-		defer pctx.subRuns.Done()
-
-		defer ctx.subRuns.Wait()
-		
-		defer func() {
-			runs := atomic.AddInt64(ctx.runs, -1)
-
-			if runs < 0 { panic(fmt.Errorf("Runs count negative : %d", runs)) }
-
-			if runs != 0 { return }
-
-			ctx.Lock(); defer ctx.Unlock()
-
-			l := len(*ctx.closeHandlers)
-
-			if l == 0 { return  }
-
-			l--
-			ph := (*ctx.closeHandlers)[l]
-			*ctx.closeHandlers = (*ctx.closeHandlers)[:l]
-
-			Run(*ph)
-		}()
-
-		defer atomic.AddInt64(pctx.runs,-1)
-
-   		defer func() {
-			err := recover()
-
-   			if err == nil { return }
-
-			ctx.RLock()
-			panicHandler := ctx.panicHandler
-			ctx.RUnlock()
-
-			if panicHandler != nil {
-				defer func() {
-					perr := recover()
-
-					if perr != nil {
-						fmt.Printf("ROUTINE PANIC: %s\n", err)
-						fmt.Printf("PANIC_HANDLER's PANIC: %s\n%s\n", perr, debug.Stack())
-					}
-				}()
-
-				(*panicHandler)(err)
-			} else {
-				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
-			}
-		}()
-
-   		routine()
-	}()
-}
-
-// Runs go routine with context.
-// Uses global context if not exists before & set new vars.
-// Does not affects on context.Wait() and run CloseHandlers.
-func RunHeir (routine func()) {
-	pctx := getContext(goid.GoID())
-
-	if pctx == nil { pctx = gctx }
+func (c *context) run (routine func(), onlyHeir bool) {
+	if !onlyHeir { atomic.AddInt64(&c.runs, 1) }
 
 	go func() {
 		routineID := goid.GoID()
-		ctx := createContext(routineID, pctx)
-		defer deleteContext(routineID)
+		ctx := contextCreate(routineID, c)
+		defer contextDelete(routineID)
 
-		if pctx == gctx { ctx.vars = map[string]interface{}{} }
-
+		if !onlyHeir { defer ctx.end() }
+		
 		defer func() {
 			err := recover()
-
-			if err == nil { return }
-
-			ctx.RLock()
-			panicHandler := ctx.panicHandler
-			ctx.RUnlock()
-
-			if panicHandler != nil {
-				defer func() {
-					perr := recover()
-
-					if perr != nil {
-						fmt.Printf("ROUTINE PANIC: %s\n", err)
-						fmt.Printf("PANIC_HANDLER's PANIC: %s\n%s\n", perr, debug.Stack())
-					}
-				}()
-
-				(*panicHandler)(err)
-			} else {
-				fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
-			}
+			if err != nil { ctx.handlePanic(err) }
 		}()
 
 		routine()
 	}()
 }
 
-// Waits for end all sub runs
-func Wait () {
-	ctx := getContext(goid.GoID())
+func (c *context) end () {
+	if atomic.LoadInt64(&c.runs) != 0 { return }
 
-	if ctx == nil { ctx = gctx }
+ 	if c.close() { return }
 
-	ctx.subRuns.Wait()
+ 	<-c.Emit(EV_CLOSED)
+
+ 	if c == gctx { return }
+
+ 	atomic.AddInt64(&c.parent.runs, -1)
+
+ 	c.parent.Emit(EV_RUN_DONE)
+
+	c.parent.end()
 }
 
-// Sets panic handler & returns previous handler
-func SetPanicHandler (handler func (err interface{})) func(err interface{}) {
-	ctx := getContext(goid.GoID())
 
-	if ctx == nil { ctx = gctx }
 
-	ctx.Lock()
-	prevHandler := ctx.panicHandler
 
-	if prevHandler == nil {
-		ctx.panicHandler = &handler
-	} else {
-		*ctx.panicHandler = handler
+var contexts 	= map[int64]*context{}
+var contexts_mu = sync.RWMutex{}
+
+func getDefaultPanicHandler () *func (err interface{}) {
+	handler := func (err interface{}) {
+		fmt.Printf("UNCAUGHT PANIC: %s\n%s\n", err, debug.Stack())
 	}
 
-	ctx.Unlock()
+	return &handler
+}
 
-	if prevHandler == nil { return nil }
-	return *prevHandler
+var gctx 		= &context{
+	parent 			: &context{closeHandlers:&[]*func(){}},
+	vars			: map[string]interface{}{},
+	vars_em			: &emitter.Emitter{},
+	panicHandler	: getDefaultPanicHandler(),
+	closeHandlers	: &[]*func(){},
+}
+
+func contextCreate (routineID int64, parCtx *context) (ctx *context) {
+	ctx = &context{
+		parent			: parCtx,
+		panicHandler	: parCtx.panicHandler,
+		vars			: parCtx.vars,
+		vars_em			: parCtx.vars_em,
+		closeHandlers	: parCtx.closeHandlers,
+	}
+
+	contexts_mu.Lock()
+	contexts[routineID] = ctx
+   	contexts_mu.Unlock()
+
+   	return 
+}
+
+func contextGet (routineID int64, defaultCtx *context) (ctx *context) {
+	contexts_mu.RLock()
+	ctx = contexts[routineID]
+	contexts_mu.RUnlock()
+
+	if ctx == nil { ctx = defaultCtx }
+
+	return
+}
+
+func contextDelete (routineID int64) {
+  	contexts_mu.Lock()
+  	delete(contexts, routineID)
+  	contexts_mu.Unlock()
+}
+
+
+
+
+// Gets variable from current context
+func Get (varName string) interface{} {
+   	return contextGet(goid.GoID(), gctx).get(varName)
+}
+
+// Sets variable to current context
+func Set (varName string, value interface{}) {
+	contextGet(goid.GoID(), gctx).set(varName, value)
+	return
+}
+
+// Subscribes on event variable set
+func OnSet (varName string) <-chan emitter.Event {
+	return contextGet(goid.GoID(), gctx).onSet(varName)
+}
+
+// Removes susbscribe on event variable set
+func OffSet (varName string, ch <-chan emitter.Event) {
+	contextGet(goid.GoID(), gctx).offSet(varName, ch)
+	return
+}
+
+// Runs go routine with context.
+// Uses global context if not exists before
+// affects on context.Wait() and run CloseHandlers.
+func Run (routine func ()) {
+	contextGet(goid.GoID(), gctx).run(routine, false)
+}
+
+// Runs go routine with context.
+// Uses global context if not exists before
+// Does not affects on context.Wait() and run CloseHandlers.
+func RunHeir (routine func()) {
+	contextGet(goid.GoID(), gctx).run(routine, true)
+}
+
+// Waits for end all sub runs
+func Wait () {
+	contextGet(goid.GoID(), gctx).wait()
+}
+
+// Sets global panic handler & returns previous handler.
+func SetGPanicHandler (handler func (err interface{})) (prevHandler func(err interface{})) {
+	return contextGet(goid.GoID(), gctx).setPanicHandler(handler, false)
+}
+
+// Sets local panic handler & returns previous handler.
+// It will catch panics in current & all runs from current context
+func SetLPanicHandler (handler func (err interface{})) (prevHandler func(err interface{})) {
+	return contextGet(goid.GoID(), gctx).setPanicHandler(handler, true)
 }
 
 // Adds close handler.
-// Close handler will runs after ends all runs in context
+// It will runs after ends all runs in all context
 func AddCloseHandler (handler *func()) {
-	ctx := getContext(goid.GoID())
+	contextGet(goid.GoID(), gctx).addCloseHandler(handler, false)
+}
 
-	if ctx == nil { ctx = gctx }
-	
-	ctx.Lock(); defer ctx.Unlock()
-	
-   	for _,h := range *ctx.closeHandlers {
-   		if h == handler { return }
-	}
-
-	*ctx.closeHandlers = append(*ctx.closeHandlers, handler)
+// Adds local close handler.
+// It will runs after ends all runs in current context
+func AddLCloseHandler (handler *func()) {
+	contextGet(goid.GoID(), gctx).addCloseHandler(handler, true)
 }
 
 // removes close handler
 func RemoveCloseHandler (handler *func()) {
-	ctx := getContext(goid.GoID())
-
-	if ctx == nil { ctx = gctx }
-
-	ctx.Lock(); defer ctx.Unlock()
-
-	for i,h := range *ctx.closeHandlers {
-		if h == handler {
-			*ctx.closeHandlers = append((*ctx.closeHandlers)[:i], (*ctx.closeHandlers)[i+1:]...)
-			break
-		}
-	}
+	contextGet(goid.GoID(), gctx).removeCloseHandler(handler)
 }
 
 // Separates current context from parent.
 // WARN!!! Should call BEFORE use any Runs.
 // Sets in current context new runs & vars & closeHandlers & emitter.
 func Separate () {
-	ctx := getContext(goid.GoID())
+	ctx := contextGet(goid.GoID(), nil)
 
 	if ctx == nil { panic("Context not runned") }
 
-	ctx.Lock(); defer ctx.Unlock()
-
-	ctx.vars = map[string]interface{}{}
-
-	atomic.AddInt64(ctx.runs, -1)
-	runs := int64(1)
-	ctx.runs = &runs
-
-	closeHandlers := make([]*func(),0)
-	ctx.closeHandlers = &closeHandlers
-
-	ctx.emitter = &emitter.Emitter{}
-
-	if ctx.panicHandler != nil {
-		handler := *ctx.panicHandler
-		ctx.panicHandler = &handler
-	}
+	ctx.separate()
 }
 

@@ -42,29 +42,69 @@ func TestRun (T *testing.T) {
 	<-done
 }
 
-func TestPanicHandlerSetNoRun (T *testing.T) {
-	SetPanicHandler(func(err interface{}) {})
-}
 
 func TestPanicHandlerSet (T *testing.T) {
-	done := make(chan bool)
+	done := make(chan int)
+
+	SetGPanicHandler(func(err interface{}) {
+		done<- 6
+
+		if err != "panic in LPanicHandler" {
+			T.Errorf("Incorrect panic value: %#v", err)
+		}
+
+		go close(done)
+
+		panic("panic in root should prints to stdout with stack")
+	})
 	
 	Run(func() {
-		SetPanicHandler(func(err interface{}) {
-			if err != "panic in routine" {
+		done<- 1
+		
+		SetLPanicHandler(func(err interface{}) {
+			done<- 5
+
+			if err != "panic in LGPanicHandler" {
 				T.Errorf("Incorrect panic value: %#v", err)
 			}
 
-			done <-true
+			panic("panic in LPanicHandler")
 		})
 
-
 		Run(func() {
-			panic("panic in routine")
+			done<- 2
+
+			SetLPanicHandler(func(err interface{}) {  // should be replaced by next GHandler
+				done<- 0
+			})
+		
+			Run(func() {
+				done<-3
+
+				SetGPanicHandler(func(err interface{}) {
+					done<- 4
+
+					if err != "panic in routine" {
+						T.Errorf("Incorrect panic value: %#v", err)
+					}
+
+					panic("panic in LGPanicHandler")
+				})
+
+				panic("panic in routine")
+			})
 		})
 	})
 
-	<-done
+	si := 1
+	for i := range done {
+		fmt.Println("done", i)
+		
+		if i != si { T.Errorf("Incorrect run queue: %d != %d", i, si) }
+		si++
+	}
+
+	time.Sleep(time.Millisecond*10)
 }
 
 func TestPanicHandlerNotSet (t *testing.T) {
@@ -85,7 +125,7 @@ func TestPanicHandlerPanics (t *testing.T) {
 	done := make(chan bool)
 
 	Run(func() {
-		SetPanicHandler(func(err interface{}) {
+		SetGPanicHandler(func(err interface{}) {
 			go func() { done<-true }()
 
 			panic("Panic in panicHadler should prints to stdout with source panic && stack")
@@ -104,15 +144,20 @@ func TestWait (T *testing.T) {
 	done := make(chan bool)
 	done2 := make(chan bool)
 
+	step := make(chan int)
+	
 	Run(func() {
-		Run(func() {time.Sleep(time.Millisecond*100)})
-		Run(func() {time.Sleep(time.Millisecond*250)})
-		Wait()
+		Run(func() {time.Sleep(time.Millisecond*100); step<- 2 })
+		Run(func() {
+			Run(func() {time.Sleep(time.Millisecond*250); step<- 5 })
+			Run(func() {time.Sleep(time.Millisecond*50); step<- 1 })
+			Run(func() {time.Sleep(time.Millisecond*150); step<- 3 })
+			fmt.Println("exit2")
+		})
+		fmt.Println("exit1")
 	})
 
-	Run(func() {
-		time.Sleep(time.Millisecond*200)
-	})
+	Run(func() { time.Sleep(time.Millisecond*200); step<- 4 })
 
 	go func() {
 		select {
@@ -126,8 +171,18 @@ func TestWait (T *testing.T) {
 				}
 
 		}
-
+		
 		close(done2)
+	}()
+
+	go func() {
+		si := 1
+		for i := range step {
+			fmt.Println("step", i)
+
+			if i != si { T.Errorf("Incorrect run queue: %d != %d", i, si) }
+			si++
+		}
 	}()
 
 	Wait()
@@ -138,7 +193,7 @@ func TestWait (T *testing.T) {
 func TestAddRemoveCloseHandler (T *testing.T) {
 	done := make(chan int, 10)
 
-	SetPanicHandler(func(err interface{}) {
+	SetGPanicHandler(func(err interface{}) {
 		T.Errorf("PANIC: %s\nStack: %s", err, debug.Stack())
 	})
 
@@ -182,8 +237,12 @@ func TestAddRemoveCloseHandler (T *testing.T) {
 func TestCloseHandlerPanics (T *testing.T) {
 	done := make(chan int, 10)
 
-	SetPanicHandler(func(err interface{}) {
+	SetGPanicHandler(func(err interface{}) {
 		done<- 3
+
+		if err != "Panic should calls panicHandler" {
+			T.Errorf("Incorrect panic value: %s", err)
+		}
 		
 		go close(done)
 
@@ -250,6 +309,7 @@ func TestSeparate (T *testing.T) {
 
 	si := 1
 	for i := range done {
+		fmt.Println("done", i)
 		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
 		si++
 	}
@@ -261,12 +321,12 @@ func TestSeparatePanic (T *testing.T) {
 	Run(func() {
 		done<- 1
 
-		SetPanicHandler(func(err interface{}) {
+		SetGPanicHandler(func(err interface{}) {
 			if err != "panic in context" {
-				T.Fatalf("Incorrect err: %s", err)
+				T.Errorf("Incorrect err: %s", err)
 			}
 
-			done<- 8
+			done<- 9
 			close(done)
 		})
 
@@ -275,29 +335,29 @@ func TestSeparatePanic (T *testing.T) {
 			Separate()
 
 			Run(func() {
-				done<- 4
-				SetPanicHandler(func(err interface{}) {
+				done<- 5
+				SetGPanicHandler(func(err interface{}) {
 					if err != "panic in separate context" {
-						T.Fatalf("Incorrect err: %s", err)
+						T.Errorf("Incorrect err: %s", err)
 					}
 
 					done<- 7
 				})
+				
+				Run(func() {
+					done<- 6
+					panic("panic in separate context")
+				})
 			})
-
-			Wait()
 			
-			Run(func() {
-				done<- 6
-				panic("panic in separate context")
-			})
-
-			done<- 5
+			done<- 4
 		})
 
 		done<- 2
 
 		Wait()
+
+		done<- 8
 
 		Run(func() {
 			Separate()
@@ -307,7 +367,7 @@ func TestSeparatePanic (T *testing.T) {
 
 	si := 1
 	for i := range done {
-		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
+		if i != si { T.Errorf("Incorrect run queue: %d != %d", i, si) }
 		fmt.Println("done", i)
 		si++
 	}
