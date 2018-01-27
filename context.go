@@ -15,7 +15,9 @@ const EV_CLOSED 		 = "closed"
 const EV_VARS_SET_PREFIX = "SET:"
 
 type context struct {
+	id int64
 	parent        *context
+	running 	  int32
 	panicHandler  *func (err interface{})
 
 	separated	  bool
@@ -90,10 +92,13 @@ func (c *context) set (varName string, value interface{}) {
 	c.vars[varName] = value
 	c.Unlock()
 
+	fmt.Printf("SET %s %v %p\n", varName, value, c)
+
 	<-c.vars_em.Emit(EV_VARS_SET_PREFIX+varName, value)
 }
 
 func (c *context) onSet (varName string) <-chan emitter.Event {
+	fmt.Printf("ON %s %p\n", varName, c)
 	return c.vars_em.On(EV_VARS_SET_PREFIX+varName)
 }
 
@@ -141,7 +146,7 @@ func (c *context) close () (closing bool) {
 		h := (*c.closeHandlers)[chl]
 		*c.closeHandlers = (*c.closeHandlers)[:chl]
 
-		c.run(*h, false)
+		c.run(*h)
 		return true
 	}
 
@@ -149,30 +154,33 @@ func (c *context) close () (closing bool) {
 }
 
 func (c *context) wait () {
-	atomic.AddInt64(&c.runs,1)
+	evRunDone := c.On(EV_RUN_DONE)
 
-	for atomic.LoadInt64(&c.runs) != 1 {
-		<-c.Once(EV_RUN_DONE)
+	for atomic.LoadInt64(&c.runs) != 0 {
+		<-evRunDone
 	}
 
-	atomic.AddInt64(&c.runs,-1)
+	c.Off(EV_RUN_DONE, evRunDone)
 }
 
-func (c *context) run (routine func(), onlyHeir bool) {
-	if !onlyHeir { atomic.AddInt64(&c.runs, 1) }
+func (c *context) run (routine func()) {
+	atomic.AddInt64(&c.runs, 1)
 
 	go func() {
 		routineID := goid.GoID()
 		ctx := contextCreate(routineID, c)
 		defer contextDelete(routineID)
+		
+		defer atomic.StoreInt32(&ctx.running, 0)
 
-		if !onlyHeir { defer ctx.end() }
+		defer ctx.end()
 		
 		defer func() {
 			err := recover()
 			if err != nil { ctx.handlePanic(err) }
 		}()
 
+		ctx.running = 1
 		routine()
 	}()
 }
@@ -186,11 +194,13 @@ func (c *context) end () {
 
  	if c == gctx { return }
 
- 	atomic.AddInt64(&c.parent.runs, -1)
+ 	par := c.parent
 
- 	c.parent.Emit(EV_RUN_DONE)
+ 	atomic.AddInt64(&par.runs, -1)
 
-	c.parent.end()
+ 	par.Emit(EV_RUN_DONE)
+
+	if atomic.LoadInt32(&par.running) == 0 { par.end() }
 }
 
 
@@ -217,6 +227,7 @@ var gctx 		= &context{
 
 func contextCreate (routineID int64, parCtx *context) (ctx *context) {
 	ctx = &context{
+		id : routineID,
 		parent			: parCtx,
 		panicHandler	: parCtx.panicHandler,
 		vars			: parCtx.vars,
@@ -274,16 +285,8 @@ func OffSet (varName string, ch <-chan emitter.Event) {
 
 // Runs go routine with context.
 // Uses global context if not exists before
-// affects on context.Wait() and run CloseHandlers.
 func Run (routine func ()) {
-	contextGet(goid.GoID(), gctx).run(routine, false)
-}
-
-// Runs go routine with context.
-// Uses global context if not exists before
-// Does not affects on context.Wait() and run CloseHandlers.
-func RunHeir (routine func()) {
-	contextGet(goid.GoID(), gctx).run(routine, true)
+	contextGet(goid.GoID(), gctx).run(routine)
 }
 
 // Waits for end all sub runs
