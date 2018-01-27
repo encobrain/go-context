@@ -151,7 +151,7 @@ func (c *context) close () (closing bool) {
 }
 
 func (c *context) wait () {
-	evRunDone := c.On(EV_RUN_DONE)
+	evRunDone := c.On(EV_RUN_DONE, emitter.Skip)
 
 	for atomic.LoadInt64(&c.runs) != 0 {
 		<-evRunDone
