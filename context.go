@@ -195,7 +195,7 @@ func (c *context) end () {
 
  	atomic.AddInt64(&par.runs, -1)
 
- 	par.Emit(EV_RUN_DONE)
+ 	<-par.Emit(EV_RUN_DONE)
 
 	if atomic.LoadInt32(&par.running) == 0 { par.end() }
 }
