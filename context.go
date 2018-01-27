@@ -92,13 +92,10 @@ func (c *context) set (varName string, value interface{}) {
 	c.vars[varName] = value
 	c.Unlock()
 
-	fmt.Printf("SET %s %v %p\n", varName, value, c)
-
 	<-c.vars_em.Emit(EV_VARS_SET_PREFIX+varName, value)
 }
 
 func (c *context) onSet (varName string) <-chan emitter.Event {
-	fmt.Printf("ON %s %p\n", varName, c)
 	return c.vars_em.On(EV_VARS_SET_PREFIX+varName)
 }
 
