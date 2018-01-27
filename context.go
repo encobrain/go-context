@@ -199,8 +199,6 @@ func (c *context) end () {
 
  	runs := atomic.AddInt64(&par.runs, -1)
 
-	fmt.Println("Runs end", par.id, runs)
-
  	if runs == 0 { <-par.Emit(EV_RUNS_DONE) }
 
 	if atomic.LoadInt32(&par.running) == 0 { par.end() }
