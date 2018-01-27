@@ -10,10 +10,12 @@ import (
 	"github.com/olebedev/emitter"
 )
 
-const EV_RUN_DONE		 = "runDone"
+const EV_RUNS_DONE		 = "runsDone"
 const EV_CLOSED 		 = "closed"
 const EV_VARS_SET_PREFIX = "SET:"
 
+// event EV_RUNS_DONE
+// event EV_CLOSED
 type context struct {
 	id int64
 	parent        *context
@@ -151,13 +153,15 @@ func (c *context) close () (closing bool) {
 }
 
 func (c *context) wait () {
-	evRunDone := c.On(EV_RUN_DONE, emitter.Skip)
+	evRunsDone := c.Once(EV_RUNS_DONE)
 
-	for atomic.LoadInt64(&c.runs) != 0 {
-		<-evRunDone
-	}
+	go func() {
+		if atomic.LoadInt64(&c.runs) == 0 {
+			c.Emit(EV_RUNS_DONE)
+		}
+	}()
 
-	c.Off(EV_RUN_DONE, evRunDone)
+	<-evRunsDone
 }
 
 func (c *context) run (routine func()) {
@@ -193,9 +197,11 @@ func (c *context) end () {
 
  	par := c.parent
 
- 	atomic.AddInt64(&par.runs, -1)
+ 	runs := atomic.AddInt64(&par.runs, -1)
 
- 	<-par.Emit(EV_RUN_DONE)
+	fmt.Println("Runs end", par.id, runs)
+
+ 	if runs == 0 { <-par.Emit(EV_RUNS_DONE) }
 
 	if atomic.LoadInt32(&par.running) == 0 { par.end() }
 }
@@ -214,13 +220,12 @@ func getDefaultPanicHandler () *func (err interface{}) {
 	return &handler
 }
 
-var gctx 		= &context{
-	parent 			: &context{closeHandlers:&[]*func(){}},
-	vars			: map[string]interface{}{},
-	vars_em			: &emitter.Emitter{},
-	panicHandler	: getDefaultPanicHandler(),
-	closeHandlers	: &[]*func(){},
-}
+var gctx 		= contextCreate(goid.GoID(), &context{
+	panicHandler:   getDefaultPanicHandler(),
+	vars:			map[string]interface{}{},
+	vars_em: 		&emitter.Emitter{},
+	closeHandlers:	&[]*func(){},
+})
 
 func contextCreate (routineID int64, parCtx *context) (ctx *context) {
 	ctx = &context{
@@ -329,4 +334,3 @@ func Separate () {
 
 	ctx.separate()
 }
-
