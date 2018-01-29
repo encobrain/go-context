@@ -94,7 +94,7 @@ func (c *context) set (varName string, value interface{}) {
 	c.vars[varName] = value
 	c.Unlock()
 
-	<-c.vars_em.Emit(EV_VARS_SET_PREFIX+varName, value)
+	c.vars_em.Emit(EV_VARS_SET_PREFIX+varName, value)
 }
 
 func (c *context) onSet (varName string) <-chan emitter.Event {
