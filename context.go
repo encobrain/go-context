@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	
 	"github.com/t-yuki/goid"
-	"github.com/olebedev/emitter"
+	"github.com/encobrain/go-emitter"
 )
 
 const EV_RUNS_DONE		 = "runsDone"
