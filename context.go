@@ -218,7 +218,8 @@ func getDefaultPanicHandler () *func (err interface{}) {
 	return &handler
 }
 
-var gctx 		= contextCreate(goid.GoID(), &context{
+var gctxID 		= goid.GoID()
+var gctx 		= contextCreate(gctxID, &context{
 	panicHandler:   getDefaultPanicHandler(),
 	vars:			map[string]interface{}{},
 	vars_em: 		&emitter.Emitter{},
@@ -233,6 +234,10 @@ func contextCreate (routineID int64, parCtx *context) (ctx *context) {
 		vars			: parCtx.vars,
 		vars_em			: parCtx.vars_em,
 		closeHandlers	: parCtx.closeHandlers,
+	}
+
+	if parCtx.id == gctxID {
+		ctx.closeHandlers = &[]*func(){}
 	}
 
 	contexts_mu.Lock()

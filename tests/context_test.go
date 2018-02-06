@@ -1,10 +1,12 @@
-package context
+package tests
 
 import (
 	"testing"
 	"time"
 	"runtime/debug"
 	"fmt"
+
+	. "github.com/encobrain/go-context"
 )
 
 func TestGetNoRun (T *testing.T) {
@@ -57,10 +59,10 @@ func TestPanicHandlerSet (T *testing.T) {
 
 		panic("panic in root should prints to stdout with stack")
 	})
-	
+
 	Run(func() {
 		done<- 1
-		
+
 		SetLPanicHandler(func(err interface{}) {
 			done<- 5
 
@@ -77,7 +79,7 @@ func TestPanicHandlerSet (T *testing.T) {
 			SetLPanicHandler(func(err interface{}) {  // should be replaced by next GHandler
 				done<- 0
 			})
-		
+
 			Run(func() {
 				done<-3
 
@@ -147,26 +149,26 @@ func TestWait (T *testing.T) {
 	step := make(chan int)
 	
 	Run(func() {
-		Run(func() {time.Sleep(time.Millisecond*100); step<- 2 })
+		Run(func() {time.Sleep(time.Millisecond*10); step<- 2 })
 		Run(func() {
-			Run(func() {time.Sleep(time.Millisecond*250); step<- 5 })
-			Run(func() {time.Sleep(time.Millisecond*50); step<- 1 })
-			Run(func() {time.Sleep(time.Millisecond*150); step<- 3 })
+			Run(func() {time.Sleep(time.Millisecond*25); step<- 5 })
+			Run(func() {time.Sleep(time.Millisecond*5); step<- 1 })
+			Run(func() {time.Sleep(time.Millisecond*15); step<- 3 })
 			fmt.Println("exit2")
 		})
 		fmt.Println("exit1")
 	})
 
-	Run(func() { time.Sleep(time.Millisecond*200); step<- 4 })
+	Run(func() { time.Sleep(time.Millisecond*20); step<- 4 })
 
 	go func() {
 		select {
 			case <-done:
 				T.Errorf("Done early")
-			case <-time.After(time.Millisecond*250):
+			case <-time.After(time.Millisecond*25):
 				select {
 					case <-done:
-					case <-time.After(time.Millisecond):
+					case <-time.After(time.Millisecond*5):
 						T.Errorf("Not done")
 				}
 
@@ -198,20 +200,17 @@ func TestAddRemoveCloseHandler (T *testing.T) {
 	})
 
 	closeHandler := func () {
-		done<- 5
+		done<- 4
 		go close(done)
 	}
 
 	closeHandler2 := func() {
-		done<- 4
+		done<- 3
 	}
 
 	closeHandler3 := func() {
-		done<- 0
+		done<- 5
 	}
-
-	AddCloseHandler(&closeHandler)
-	AddCloseHandler(&closeHandler2)
 
 	Run(func() {
 		done<- 1
@@ -220,15 +219,14 @@ func TestAddRemoveCloseHandler (T *testing.T) {
 		AddCloseHandler(&closeHandler3)
 
 		Run(func() {
-			done<- 3
+			done<- 2
 			RemoveCloseHandler(&closeHandler3)
 		})
-
-		done<- 2
 	})
 
 	si := 1
 	for i := range done {
+		fmt.Println("done", i)
 		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
 		si++
 	}
@@ -243,7 +241,7 @@ func TestCloseHandlerPanics (T *testing.T) {
 		if err != "Panic should calls panicHandler" {
 			T.Errorf("Incorrect panic value: %s", err)
 		}
-		
+
 		go close(done)
 
 		panic("Panic in panic handler should prints to stdout with stack")
@@ -254,14 +252,15 @@ func TestCloseHandlerPanics (T *testing.T) {
 		panic("Panic should calls panicHandler")
 	}
 
-	AddCloseHandler(&closeHandler)
-
 	Run(func() {
+		AddCloseHandler(&closeHandler)
+		
 		done<- 1
 	})
 
 	si := 1
 	for i := range done {
+		fmt.Println("done", i)
 		if i != si { T.Fatalf("Incorrect run queue: %d != %d", i, si) }
 		si++
 	}
@@ -276,14 +275,14 @@ func TestSeparate (T *testing.T) {
 		Set("testVar", "foo")
 
 		close1 := func() {
-			done<- 5
+			done<- 4
 			close(done)
 		}
 
 		AddCloseHandler(&close1)
 
 		Run(func() {
-			done<- 2
+			done<- 1
 
 			Separate()
 
@@ -294,17 +293,15 @@ func TestSeparate (T *testing.T) {
 			}
 
 			close2 := func () {
-				done<- 3
+				done<- 2
 			}
 
 			AddCloseHandler(&close2)
 		})
 
-		done<- 1
-
 		Wait()
 
-		done<- 4
+		done<- 3
 	})
 
 	si := 1
