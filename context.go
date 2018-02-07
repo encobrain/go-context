@@ -22,6 +22,7 @@ type context struct {
 	running 	  int32
 	panicHandler  *func (err interface{})
 
+	heir	      bool
 	separated	  bool
 	vars          map[string]interface{}
   	vars_em       *emitter.Emitter
@@ -164,13 +165,15 @@ func (c *context) wait () {
 	<-evRunsDone
 }
 
-func (c *context) run (routine func()) {
-	atomic.AddInt64(&c.runs, 1)
+func (c *context) run (routine func(), heir bool) {
+	if !heir { atomic.AddInt64(&c.runs, 1) }
 
 	go func() {
 		routineID := goid.GoID()
 		ctx := contextCreate(routineID, c)
 		defer contextDelete(routineID)
+
+		ctx.heir = heir
 		
 		defer atomic.StoreInt32(&ctx.running, 0)
 
@@ -193,7 +196,7 @@ func (c *context) end () {
 
  	<-c.Emit(EV_CLOSED)
 
- 	if c == gctx { return }
+ 	if c == gctx || c.heir { return }
 
  	par := c.parent
 
@@ -290,8 +293,16 @@ func OffSet (varName string, ch <-chan emitter.Event) {
 
 // Runs go routine with context.
 // Uses global context if not exists before
-func Run (routine func ()) {
-	contextGet(goid.GoID(), gctx).run(routine)
+// Affects closeHandlers & Wait()
+func Run (routine func()) {
+	contextGet(goid.GoID(), gctx).run(routine, false)
+}
+
+// Runs go routine with context.
+// Uses global context if not exists before
+// Does not affects closeHandlers & Wait()
+func Heir (routine func()) {
+ 	contextGet(goid.GoID(), gctx).run(routine, true)
 }
 
 // Waits for end all sub runs
