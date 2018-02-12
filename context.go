@@ -29,7 +29,7 @@ type context struct {
   	closeHandlers *[]*func()
 
 	emitter.Emitter
-  	sync.Mutex
+  	sync.RWMutex
 }
 
 func (c *context) separate () {
@@ -83,9 +83,9 @@ func (c *context) handlePanic (err interface {}) {
 }
 
 func (c *context) get (varName string) (value interface{}) {
-	c.Lock()
+	c.RLock()
 	value = c.vars[varName]
-	c.Unlock()
+	c.RUnlock()
 	return 
 }
 
