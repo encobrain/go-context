@@ -3,6 +3,7 @@ package tests
 import (
 	"testing"
 	"time"
+	"math/rand"
 	"runtime/debug"
 	"fmt"
 
@@ -151,7 +152,7 @@ func TestWait (T *testing.T) {
 	Run(func() {
 		Run(func() {time.Sleep(time.Millisecond*10); step<- 2 })
 		Run(func() {
-			Run(func() {time.Sleep(time.Millisecond*25); step<- 5 })
+			Run(func() {time.Sleep(time.Millisecond*25); step<- 5; close(done2) })
 			Run(func() {time.Sleep(time.Millisecond*5); step<- 1 })
 			Run(func() {time.Sleep(time.Millisecond*15); step<- 3 })
 			fmt.Println("exit2")
@@ -164,17 +165,16 @@ func TestWait (T *testing.T) {
 	go func() {
 		select {
 			case <-done:
-				T.Errorf("Done early")
+				T.Fatalf("Done early")
 			case <-time.After(time.Millisecond*25):
 				select {
 					case <-done:
+						fmt.Println("Done")
 					case <-time.After(time.Millisecond*5):
-						T.Errorf("Not done")
+						T.Fatalf("Not done")
 				}
 
 		}
-		
-		close(done2)
 	}()
 
 	go func() {
@@ -187,9 +187,40 @@ func TestWait (T *testing.T) {
 		}
 	}()
 
-	Wait()
+	<-Wait()
 	close(done)
 	<-done2
+}
+
+func TestRandomWait (T *testing.T) {
+
+	levels := 5
+
+	var run func(int)
+
+	run = func (level int) {
+		if level>0 {
+			subruns := rand.Int31n(10)+3
+
+			for subruns>0 {
+				Run(func() {
+					run(level-1)
+				})
+
+				subruns--
+			}
+
+			<-Wait()
+		}
+
+		wait := time.Duration(rand.Int63n(100)*int64(time.Millisecond))+100
+		time.Sleep(wait)
+	}
+
+
+	run(levels)
+
+	<-Wait()
 }
 
 func TestAddRemoveCloseHandler (T *testing.T) {
@@ -299,7 +330,7 @@ func TestSeparate (T *testing.T) {
 			AddCloseHandler(&close2)
 		})
 
-		Wait()
+		<-Wait()
 
 		done<- 3
 	})
@@ -352,7 +383,7 @@ func TestSeparatePanic (T *testing.T) {
 
 		done<- 2
 
-		Wait()
+		<-Wait()
 
 		done<- 8
 
