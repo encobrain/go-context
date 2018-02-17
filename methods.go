@@ -97,7 +97,7 @@ func getRoutineInfo (ctx *context) (file string,line int)  {
 }
 
 func getRunning (ctx *context, par string) (running []string) {
-	ctx.Lock()
+	ctx.Lock(); defer ctx.Unlock()
 
 	if par != "" {
 		f,l := getRoutineInfo(ctx)
@@ -118,8 +118,6 @@ func getRunning (ctx *context, par string) (running []string) {
 	for _,id := range ids {
 		running = append(running, infs[id]...)
 	}
-
-	ctx.Unlock()
 
 	return
 }
