@@ -2,7 +2,6 @@ package context
 
 import (
 	"sync"
-	//"fmt"
 	"sync/atomic"
 	
 	"github.com/t-yuki/goid"
@@ -13,8 +12,9 @@ const EV_RUNS_DONE		 = "runs.done"
 const EV_VARS_SET_PREFIX = "SET."
 
 const (
-	STATE_STOPPED int32 = iota
+	STATE_CLOSED  int32 = iota
 	STATE_RUNNING
+	STATE_ENDED
 )
 
 // event EV_RUNS_DONE
@@ -177,11 +177,12 @@ func (c *context) run (routine func()) {
 		ctx.routine = routine
 		c.childsAdd(routineID, ctx)
 
-		//fmt.Println("R", c.id, ctx.id)
+		//f,l := getRoutineInfo(ctx)
+		//fmt.Println("R", c.id, ctx.id, f,l)
 
 		defer contextDelete(routineID)
-		defer atomic.StoreInt32(&ctx.state, STATE_STOPPED)
 		defer ctx.end()
+		defer atomic.StoreInt32(&ctx.state, STATE_ENDED)
 
 		defer func() {
 			err := recover()
@@ -197,7 +198,8 @@ func (c *context) end () {
 	if atomic.LoadInt64(&c.runs) != 0 { return }
 
  	if c.close() { return }
- 	
+ 	if !atomic.CompareAndSwapInt32(&c.state, STATE_ENDED, STATE_CLOSED) { return }
+
  	if c == gctx { return }
 
  	par := c.parent
@@ -210,7 +212,7 @@ func (c *context) end () {
  	
 	if runs == 0 {
 		//fmt.Println("ST", par.id, atomic.LoadInt32(&par.state) )
-		if atomic.LoadInt32(&par.state) == STATE_STOPPED {
+		if atomic.LoadInt32(&par.state) == STATE_ENDED {
 			par.end()
 		} else {
 			<-par.Emit(EV_RUNS_DONE)

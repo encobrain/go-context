@@ -99,9 +99,8 @@ func getRoutineInfo (ctx *context) (file string,line int)  {
 func getRunning (ctx *context, par string) (running []string) {
 	ctx.Lock()
 
-	f,l := getRoutineInfo(ctx)
-
 	if par != "" {
+		f,l := getRoutineInfo(ctx)
 		st := " "; if atomic.LoadInt32(&ctx.state) == STATE_RUNNING { st = "▸" }
 		running = append(running, fmt.Sprintf("%s %s.%d  %s:%d",st, par,ctx.id, f,l))
 	}

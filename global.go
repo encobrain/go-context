@@ -24,7 +24,7 @@ func init () {
 
 	if !ok { panic("Cant get root path") }
 
-	ROOTPATH = strings.Replace(ROOTPATH, "github.com/encobrain/go-context/context.go", "", 1)
+	ROOTPATH = strings.Replace(ROOTPATH, "github.com/encobrain/go-context/global.go", "", 1)
 
 	gctx = contextCreate(gctxID, &context{
 		childs: 		map[int64]*context{},
