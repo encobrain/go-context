@@ -19,9 +19,8 @@ func Get (varName string) interface{} {
 }
 
 // Sets variable to current context
-func Set (varName string, value interface{}) {
-	contextGet(goid.GoID(), gctx).set(varName, value)
-	return
+func Set (varName string, value interface{}) (setStatus chan emitter.EmitStatus) {
+	return contextGet(goid.GoID(), gctx).set(varName, value)
 }
 
 // Subscribes on event variable set
@@ -107,6 +106,8 @@ func getRunning (ctx *context, par string) (running []string) {
 
 	var ids []int64
 	var infs = map[int64][]string{}
+
+	ctx.childs_mu.Lock(); defer ctx.childs_mu.Unlock()
 
 	for id,c := range ctx.childs {
 		ids = append(ids,id)
