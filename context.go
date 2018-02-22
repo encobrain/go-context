@@ -93,10 +93,10 @@ func (c *context) get (varName string) (value interface{}) {
 	return 
 }
 
-func (c *context) set (varName string, value interface{}) {
+func (c *context) set (varName string, value interface{}) (setStatus chan emitter.EmitStatus) {
 	c.vars.Store(varName, value)
 
-	c.vars_em.Emit(EV_VARS_SET_PREFIX+varName, value)
+	return c.vars_em.Emit(EV_VARS_SET_PREFIX+varName, value)
 }
 
 func (c *context) onSet (varName string) chan emitter.Event {
