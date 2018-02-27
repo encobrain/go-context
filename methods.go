@@ -7,6 +7,8 @@ import (
 	"strings"
 	"reflect"
 	"runtime"
+	"regexp"
+	"strconv"
 	
 	"github.com/t-yuki/goid"
 	
@@ -95,13 +97,23 @@ func getRoutineInfo (ctx *context) (file string,line int)  {
 	return
 }
 
-func getRunning (ctx *context, par string) (running []string) {
+var filelinesRe = regexp.MustCompile("/.*?:\\d+")
+
+func getRunning (ctx *context, par string, stacks map[int64]string) (running []string) {
 	ctx.Lock(); defer ctx.Unlock()
 
 	if par != "" {
 		f,l := getRoutineInfo(ctx)
-		st := " "; if atomic.LoadInt32(&ctx.state) == STATE_RUNNING { st = "▸" }
-		running = append(running, fmt.Sprintf("%s %s.%d  %s:%d",st, par,ctx.id, f,l))
+		st := " "; stack := ""
+
+		if atomic.LoadInt32(&ctx.state) == STATE_RUNNING {
+			st = "▸"
+			stack = strings.Join(filelinesRe.FindAllString(stacks[ctx.id],-1), "\n     ")
+
+			stack = "\n     " + strings.Replace(stack, ROOTPATH, "",-1)
+		}
+
+		running = append(running, fmt.Sprintf("%s %s.%d  %s:%d%s",st, par,ctx.id, f,l, stack))
 	}
 
 	var ids []int64
@@ -111,7 +123,7 @@ func getRunning (ctx *context, par string) (running []string) {
 
 	for id,c := range ctx.childs {
 		ids = append(ids,id)
-		infs[id] = getRunning(c, fmt.Sprintf("%s.%d",par,ctx.id))
+		infs[id] = getRunning(c, fmt.Sprintf("%s.%d",par,ctx.id), stacks)
 	}
 
 	sort.Slice(ids, func(i, j int) bool { return ids[i]<ids[j] })
@@ -123,9 +135,30 @@ func getRunning (ctx *context, par string) (running []string) {
 	return
 }
 
+var stackpathsRe = regexp.MustCompile("(?s)goroutine (\\d+) \\[.*?]:\\n(.*?)\\n\\n")
+
 // Gets running contexts as routineID... file:line
 func GetRunning () (running []string) {
 	ctx := contextGet(goid.GoID(), gctx)
 
-	return getRunning(ctx, "")
+	buf := make([]byte, 1024)
+
+	for {
+		l := runtime.Stack(buf, true)
+		if l != len(buf) {
+			buf = buf[:l]
+			break
+		}
+
+		buf = make([]byte, len(buf)*2)
+	}
+	
+	stacks := map[int64]string{}
+
+	for _,m := range stackpathsRe.FindAllStringSubmatch(string(buf)+"\n", -1) {
+		id,_ := strconv.ParseInt(string(m[1]),10,64)
+		stacks[id] = m[2]
+	}
+
+	return getRunning(ctx, "", stacks)
 }
