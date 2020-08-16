@@ -2,15 +2,16 @@ package context
 
 import (
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"sync"
 
 	"github.com/encobrain/go-emitter"
 )
 
-var ROOTPATH = ""
+var LIBDIR_RE *regexp.Regexp
 var contexts = map[uint64]*context{}
 var contexts_mu = sync.RWMutex{}
 var gctxID = getGID()
@@ -18,13 +19,15 @@ var gctx *context
 
 func init() {
 	var ok bool
-	_, ROOTPATH, _, ok = runtime.Caller(0)
+	_, libDir, _, ok := runtime.Caller(0)
 
 	if !ok {
 		panic("Cant get root path")
 	}
 
-	ROOTPATH = strings.Replace(ROOTPATH, "github.com/encobrain/go-context/global.go", "", 1)
+	libDir = filepath.Dir(libDir)
+
+	LIBDIR_RE = regexp.MustCompile(regexp.QuoteMeta(libDir) + "/\\w+\\.go:\\d+\\n\\s*")
 
 	gctx = contextCreate(gctxID, &context{
 		childs:        map[uint64]*context{},

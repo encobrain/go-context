@@ -91,47 +91,58 @@ func getRoutineInfo(ctx *context) (file string, line int) {
 	fn := runtime.FuncForPC(pc)
 
 	file, line = fn.FileLine(pc)
-	file = strings.Replace(file, ROOTPATH, "", 1)
+	file = LIBDIR_RE.ReplaceAllString(file, "")
 
 	return
 }
 
 var filelinesRe = regexp.MustCompile("/.*?:\\d+")
 
-func getRunning(ctx *context, par string, stacks map[uint64]string) (running []string) {
+func getRunning(ctx *context, par string, stacks map[uint64]string) (running string) {
 	ctx.Lock()
 	defer ctx.Unlock()
 
 	if par != "" {
 		f, l := getRoutineInfo(ctx)
-		st := " "
+		st := "■"
 		stack := ""
 
 		if atomic.LoadInt32(&ctx.state) == STATE_RUNNING {
-			st = "▸"
-			stack = strings.Join(filelinesRe.FindAllString(stacks[ctx.id], -1), "\n     ")
+			st = "▶"
 
-			stack = "\n     " + strings.Replace(stack, ROOTPATH, "", -1)
+			calls := filelinesRe.FindAllString(stacks[ctx.id], -1)
+
+			sort.SliceStable(calls, func(i, j int) bool { return true })
+
+			stack = strings.Join(calls, "\n"+par+"  ")
+
+			stack = "\n"+par+"  " + LIBDIR_RE.ReplaceAllString(stack, "")
 		}
 
-		running = append(running, fmt.Sprintf("%s %s.%d  %s:%d%s", st, par, ctx.id, f, l, stack))
+		running = fmt.Sprintf("%s%s %s:%d%s", par, st, f, l, stack)
 	}
 
-	var ids []uint64
-	var infs = map[uint64][]string{}
+	var callsUniq = map[string]int{}
 
 	ctx.childs_mu.Lock()
 	defer ctx.childs_mu.Unlock()
 
-	for id, c := range ctx.childs {
-		ids = append(ids, id)
-		infs[id] = getRunning(c, fmt.Sprintf("%s.%d", par, ctx.id), stacks)
+	for _, c := range ctx.childs {
+		call := getRunning(c, fmt.Sprintf("%s  ", par), stacks)
+
+		callsUniq[call] = 1
 	}
 
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var calls []string
 
-	for _, id := range ids {
-		running = append(running, infs[id]...)
+	for call := range callsUniq {
+		calls = append(calls, call)
+	}
+
+	sort.Strings(calls)
+
+	for _,call := range calls {
+		running += "\n" + call
 	}
 
 	return
@@ -140,7 +151,7 @@ func getRunning(ctx *context, par string, stacks map[uint64]string) (running []s
 var stackpathsRe = regexp.MustCompile("(?s)goroutine (\\d+) \\[.*?]:\\n(.*?)\\n\\n")
 
 // Gets running contexts as routineID... file:line
-func GetRunning() (running []string) {
+func GetRunning() (running string) {
 	ctx := contextGet(getGID(), gctx)
 
 	buf := make([]byte, 1024)
@@ -162,5 +173,5 @@ func GetRunning() (running []string) {
 		stacks[id] = m[2]
 	}
 
-	return getRunning(ctx, "", stacks)
+	return getRunning(ctx, "", stacks)[1:]
 }
